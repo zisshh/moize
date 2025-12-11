@@ -58,6 +58,7 @@ export type OnCacheOperation<MoizeableFn extends Moizeable = Moizeable> = (
 
 export type IsEqual = (cacheKeyArg: any, keyArg: any) => boolean;
 export type IsMatchingKey = (cacheKey: Key, key: Key) => boolean;
+export type KeyField = string | ((item: any) => any);
 export type OnExpire = (key: Key) => any;
 export type Serialize = (key: Key) => string[];
 export type TransformKey = (key: Key) => Key;
@@ -69,6 +70,7 @@ export type Options<MoizeableFn extends Moizeable = Moizeable> = Partial<{
     isReact: boolean;
     isSerialized: boolean;
     isShallowEqual: boolean;
+    keyField: KeyField;
     matchesArg: IsEqual;
     matchesKey: IsMatchingKey;
     maxAge: number;
@@ -264,6 +266,9 @@ export interface Moize<
         keyMatcher: Matcher
     ) => Moizer<{ matchesKey: Matcher }>;
     maxAge: MaxAge;
+    keyField: <KeyFieldValue extends KeyField>(
+        keyField: KeyFieldValue
+    ) => Moizer<{ keyField: KeyFieldValue }>;
     maxArgs: <MaxArgs extends number>(
         args: MaxArgs
     ) => Moizer<{ maxArgs: MaxArgs }>;

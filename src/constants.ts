@@ -11,6 +11,7 @@ export const DEFAULT_OPTIONS: Options<AnyFn> = {
     isReact: false,
     isSerialized: false,
     isShallowEqual: false,
+    keyField: undefined,
     matchesArg: undefined,
     matchesKey: undefined,
     maxAge: undefined,

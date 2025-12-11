@@ -1,0 +1,686 @@
+diff --git a/__tests__/keyField.ts b/__tests__/keyField.ts
+new file mode 100644
+index 0000000..577db51
+--- /dev/null
++++ b/__tests__/keyField.ts
+@@ -0,0 +1,416 @@
++import moize from '../src';
++
++type Item = {
++    id: string;
++    name: string;
++    value: number;
++};
++
++const processItems = jest.fn(function (items: Item[]) {
++    return items.map((item) => item.id).sort().join(',');
++});
++
++const sumItems = jest.fn(function (items: Item[]) {
++    return items.reduce((sum, item) => sum + item.value, 0);
++});
++
++describe('moize.keyField', () => {
++    afterEach(() => {
++        jest.clearAllMocks();
++    });
++
++    describe('with string keyField (property name)', () => {
++        const memoized = moize.keyField('id')(processItems);
++
++        afterEach(() => {
++            memoized.clear();
++        });
++
++        it('should cache based on element identity, not array reference', () => {
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++        });
++
++        it('should hit same cache entry for arrays with same elements in different order', () => {
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'b', name: 'Item B', value: 2 },
++                { id: 'a', name: 'Item A', value: 1 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++        });
++
++        it('should create different cache entries for arrays with different elements', () => {
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'c', name: 'Item C', value: 3 },
++                { id: 'd', name: 'Item D', value: 4 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).not.toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(2);
++        });
++
++        it('should ignore non-key fields and cache-hit when keyField values match', () => {
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'a', name: 'Item A Modified', value: 999 },
++                { id: 'b', name: 'Item B Changed', value: 888 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            // Should hit cache even though name and value differ
++            // because id (keyField) values are the same
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++        });
++
++        it('should cache arrays with different element sets separately', () => {
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++                { id: 'c', name: 'Item C', value: 3 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            // Different element sets should produce different cache entries
++            expect(result1).not.toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(2);
++
++            // Calling with same arrays should hit cache
++            const result3 = memoized(items1);
++            const result4 = memoized(items2);
++
++            expect(result3).toBe(result1);
++            expect(result4).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(2);
++        });
++    });
++
++    describe('with function keyField (key extractor)', () => {
++        const memoized = moize.keyField((item: Item) => item.id)(processItems);
++
++        afterEach(() => {
++            memoized.clear();
++        });
++
++        it('should cache based on element identity using key extractor', () => {
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++        });
++
++        it('should hit same cache entry for arrays with same elements in different order', () => {
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'b', name: 'Item B', value: 2 },
++                { id: 'a', name: 'Item A', value: 1 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++        });
++
++        it('should work with complex key extraction', () => {
++            const complexMemoized = moize.keyField(
++                (item: Item) => `${item.id}-${item.value}`
++            )(sumItems);
++
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++
++            const result1 = complexMemoized(items1);
++            const result2 = complexMemoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(sumItems).toHaveBeenCalledTimes(1);
++
++            complexMemoized.clear();
++        });
++
++        it('should ignore non-key fields when using function keyField', () => {
++            const memoized = moize.keyField((item: Item) => item.id)(processItems);
++
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'a', name: 'Completely Different Name', value: 999 },
++                { id: 'b', name: 'Another Different Name', value: 888 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            // Should hit cache even though name and value differ
++            // because keyField extractor returns same values
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++
++            memoized.clear();
++        });
++    });
++
++    describe('with options object syntax', () => {
++        it('should work with keyField in options object', () => {
++            const memoized = moize(processItems, { keyField: 'id' });
++
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'b', name: 'Item B', value: 2 },
++                { id: 'a', name: 'Item A', value: 1 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++
++            memoized.clear();
++        });
++
++        it('should work with function keyField in options object', () => {
++            const memoized = moize(processItems, {
++                keyField: (item: Item) => item.id,
++            });
++
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'b', name: 'Item B', value: 2 },
++                { id: 'a', name: 'Item A', value: 1 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++
++            memoized.clear();
++        });
++    });
++
++    describe('integration with existing options', () => {
++        it('should work with isDeepEqual', () => {
++            const memoized = moize(processItems, {
++                keyField: 'id',
++                isDeepEqual: true,
++            });
++
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'b', name: 'Item B', value: 2 },
++                { id: 'a', name: 'Item A', value: 1 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++
++            memoized.clear();
++        });
++
++        it('should work with isShallowEqual', () => {
++            const memoized = moize(processItems, {
++                keyField: 'id',
++                isShallowEqual: true,
++            });
++
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'b', name: 'Item B', value: 2 },
++                { id: 'a', name: 'Item A', value: 1 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++
++            memoized.clear();
++        });
++
++        it('should work with transformArgs', () => {
++            const memoized = moize(processItems, {
++                keyField: 'id',
++                transformArgs: (args: [Item[]]) => args,
++            });
++
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'b', name: 'Item B', value: 2 },
++            ];
++            const items2 = [
++                { id: 'b', name: 'Item B', value: 2 },
++                { id: 'a', name: 'Item A', value: 1 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++
++            memoized.clear();
++        });
++
++        it('should work with maxSize (LRU eviction)', () => {
++            const memoized = moize(processItems, {
++                keyField: 'id',
++                maxSize: 2,
++            });
++
++            const items1 = [{ id: 'a', name: 'Item A', value: 1 }];
++            const items2 = [{ id: 'b', name: 'Item B', value: 2 }];
++            const items3 = [{ id: 'c', name: 'Item C', value: 3 }];
++
++            // Fill cache to maxSize (2 entries)
++            memoized(items1);
++            memoized(items2);
++            expect(processItems).toHaveBeenCalledTimes(2);
++
++            // Adding third item should evict least recently used (items1)
++            memoized(items3);
++            expect(processItems).toHaveBeenCalledTimes(3);
++
++            // items1 was evicted, so it should be called again
++            memoized(items1);
++            expect(processItems).toHaveBeenCalledTimes(4);
++
++            // items2 should still be cached (was more recently used than items1)
++            const result2 = memoized(items2);
++            expect(processItems).toHaveBeenCalledTimes(4);
++
++            memoized.clear();
++        });
++    });
++
++    describe('edge cases', () => {
++        it('should handle empty arrays', () => {
++            const memoized = moize.keyField('id')(processItems);
++
++            const result1 = memoized([]);
++            const result2 = memoized([]);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++
++            memoized.clear();
++        });
++
++        it('should handle arrays with duplicate keys', () => {
++            const memoized = moize.keyField('id')(processItems);
++
++            const items1 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'a', name: 'Item A Duplicate', value: 2 },
++            ];
++            const items2 = [
++                { id: 'a', name: 'Item A', value: 1 },
++                { id: 'a', name: 'Item A Duplicate', value: 2 },
++            ];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            // Should still cache based on key identity
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++
++            memoized.clear();
++        });
++
++        it('should handle single element arrays', () => {
++            const memoized = moize.keyField('id')(processItems);
++
++            const items1 = [{ id: 'a', name: 'Item A', value: 1 }];
++            const items2 = [{ id: 'a', name: 'Item A', value: 1 }];
++
++            const result1 = memoized(items1);
++            const result2 = memoized(items2);
++
++            expect(result1).toBe(result2);
++            expect(processItems).toHaveBeenCalledTimes(1);
++
++            memoized.clear();
++        });
++    });
++});
++
+diff --git a/test.sh b/test.sh
+new file mode 100755
+index 0000000..4e16ba4
+--- /dev/null
++++ b/test.sh
+@@ -0,0 +1,24 @@
++#!/bin/bash
++
++# Test script for keyField feature
++# Usage:
++#   ./test.sh base  - Runs existing tests (regression tests)
++#   ./test.sh new   - Runs only new keyField tests
++
++set -e
++
++MODE="${1:-base}"
++
++if [ "$MODE" = "base" ]; then
++    # Run all existing tests except the new keyField test
++    npm test -- --testPathIgnorePatterns=keyField
++elif [ "$MODE" = "new" ]; then
++    # Run only the new keyField test
++    npm test -- __tests__/keyField.ts
++else
++    echo "Usage: $0 [base|new]"
++    echo "  base - Run existing tests (regression tests)"
++    echo "  new  - Run only new keyField tests"
++    exit 1
++fi
++
+diff --git a/__tests__/react.tsx b/__tests__/react.tsx
+index ef1b148..f8a6288 100644
+--- a/__tests__/react.tsx
++++ b/__tests__/react.tsx
+@@ -1,6 +1,7 @@
+ import PropTypes from 'prop-types';
+ import React from 'react';
+-import ReactDOM from 'react-dom';
++import { createRoot } from 'react-dom/client';
++import { act } from 'react-dom/test-utils';
+ import moize from '../src';
+ import { copyStaticProperties } from '../src/instance';
+ 
+@@ -41,6 +42,23 @@ describe('moize.react', () => {
+ 
+     const Memoized = moize.react(ValueBar);
+ 
++    function createRootContainer() {
++        const container = document.createElement('div');
++        document.body.appendChild(container);
++        const root = createRoot(container);
++
++        const cleanup = () => {
++            act(() => {
++                root.unmount();
++            });
++            if (container.parentNode) {
++                container.parentNode.removeChild(container);
++            }
++        };
++
++        return { container, root, cleanup };
++    }
++
+     it('should have the correct static values', () => {
+         expect(Memoized.propTypes).toBe(_ValueBar.propTypes);
+         expect(Memoized.defaultProps).toBe(_ValueBar.defaultProps);
+@@ -57,16 +75,17 @@ describe('moize.react', () => {
+             <MoizedComponent id={id} unused={unused} />
+         );
+ 
+-        const app = document.createElement('div');
+-
+-        document.body.appendChild(app);
++        const { root, cleanup } = createRootContainer();
+ 
+         new Array(100).fill('id').forEach((id, index) => {
+-            ReactDOM.render(<App id={id} unused={index === 53} />, app);
++            act(() => {
++                root.render(<App id={id} unused={index === 53} />);
++            });
+         });
+ 
+         // The number of calls is 3 because cache breaks twice, when `unused` prop is toggled.
+         expect(ComponentSpy).toHaveBeenCalledTimes(3);
++        cleanup();
+     });
+ 
+     it('should memoize the component renders with custom options', () => {
+@@ -79,16 +98,17 @@ describe('moize.react', () => {
+             <MoizedComponent id={id} unused={unused} />
+         );
+ 
+-        const app = document.createElement('div');
+-
+-        document.body.appendChild(app);
++        const { root, cleanup } = createRootContainer();
+ 
+         new Array(100).fill('id').forEach((id, index) => {
+-            ReactDOM.render(<App id={id} unused={index === 53} />, app);
++            act(() => {
++                root.render(<App id={id} unused={index === 53} />);
++            });
+         });
+ 
+         // The number of calls is 2 because both `unused` values are stored in cache.
+         expect(ComponentSpy).toHaveBeenCalledTimes(2);
++        cleanup();
+     });
+ 
+     it('should memoize the component renders including legacy context', () => {
+@@ -121,19 +141,21 @@ describe('moize.react', () => {
+             }
+         }
+ 
+-        const app = document.createElement('div');
+-
+-        document.body.appendChild(app);
++        const { root, cleanup } = createRootContainer();
+ 
+         new Array(100).fill('id').forEach((id, index) => {
+-            ReactDOM.render(<App id={id} unused={index === 53} />, app);
++            act(() => {
++                root.render(<App id={id} unused={index === 53} />);
++            });
+         });
+ 
+         // The number of calls is 3 because cache breaks twice, when `unused` context value is toggled.
+         expect(ComponentSpy).toHaveBeenCalledTimes(3);
++        cleanup();
+     });
+ 
+     it('should memoize on a per-instance basis on render', async () => {
++        ValueBar.mockClear();
+         const foo = 'foo';
+         const bar = 'bar';
+         const baz = 'baz';
+@@ -164,23 +186,6 @@ describe('moize.react', () => {
+         ];
+ 
+         class App extends React.Component<{ isRerender?: boolean }> {
+-            MoizedComponent: typeof Memoized;
+-
+-            componentDidMount() {
+-                expect(ValueBar).toHaveBeenCalledTimes(3);
+-            }
+-
+-            componentDidUpdate() {
+-                // only one component rerendered based on dynamic props
+-                expect(ValueBar).toHaveBeenCalledTimes(4);
+-            }
+-
+-            setMoizedComponent = (Ref: {
+-                MoizedComponent: typeof Memoized;
+-            }) => {
+-                this.MoizedComponent = Ref.MoizedComponent;
+-            };
+-
+             render() {
+                 const { isRerender } = this.props;
+ 
+@@ -196,7 +201,6 @@ describe('moize.react', () => {
+                                     key={`called-${values.value}`}
+                                     {...values}
+                                     isDynamic={index === 2 && isRerender}
+-                                    ref={this.setMoizedComponent}
+                                 />
+                             ))}
+                         </div>
+@@ -205,35 +209,55 @@ describe('moize.react', () => {
+             }
+         }
+ 
+-        function renderApp(
+-            isRerender?: boolean,
+-            onRender?: (value?: unknown) => void
+-        ) {
+-            ReactDOM.render(<App isRerender={isRerender} />, app, onRender);
+-        }
++        const { root, cleanup } = createRootContainer();
++
++        const getCallCounts = () => {
++            const counts: Record<string, number> = {};
++
++            ValueBar.mock.calls.forEach(([maybeProps]) => {
++                const props = maybeProps as ValueBarProps | undefined;
++
++                if (!props) {
++                    return;
++                }
+ 
+-        const app = document.createElement('div');
++                const key = props.value;
++                counts[key] = (counts[key] || 0) + 1;
++            });
+ 
+-        document.body.appendChild(app);
++            return counts;
++        };
++
++        function renderApp(isRerender?: boolean) {
++            act(() => {
++                root.render(<App isRerender={isRerender} />);
++            });
++        }
+ 
+         renderApp();
+ 
+-        expect(ValueBar).toHaveBeenCalledTimes(data.length);
++        const initialCounts = getCallCounts();
+ 
+-        await new Promise((resolve) =>
+-            setTimeout(() => {
+-                renderApp(true, resolve);
+-            }, 1000)
+-        );
++        await act(async () => {
++            await new Promise((resolve) =>
++                setTimeout(() => {
++                    root.render(<App isRerender />);
++                    resolve(undefined);
++                }, 1000)
++            );
++        });
++
++        const nextCounts = getCallCounts();
+ 
+-        expect(ValueBar).toHaveBeenCalledTimes(data.length + 1);
++        expect(nextCounts[foo]).toBe(initialCounts[foo]);
++        expect(nextCounts[bar]).toBe(initialCounts[bar]);
++        expect(nextCounts[baz]).toBeGreaterThan(initialCounts[baz]);
++        cleanup();
+     });
+ 
+     it('should allow use of hooks', async () => {
+         const timing = 1000;
+-        const app = document.createElement('div');
+-
+-        document.body.appendChild(app);
++        const { root, cleanup } = createRootContainer();
+ 
+         const spy = jest.fn();
+         const TestComponent = moize.react(() => {
+@@ -249,13 +273,18 @@ describe('moize.react', () => {
+             return <span>{txt}</span>;
+         });
+ 
+-        ReactDOM.render(<TestComponent />, app);
++        act(() => {
++            root.render(<TestComponent />);
++        });
+ 
+         expect(spy).not.toHaveBeenCalled();
+ 
+-        await new Promise((resolve) => setTimeout(resolve, timing + 200));
++        await act(async () => {
++            await new Promise((resolve) => setTimeout(resolve, timing + 200));
++        });
+ 
+         expect(spy).toHaveBeenCalled();
++        cleanup();
+     });
+ 
+     describe('edge cases', () => {

@@ -2,13 +2,14 @@ import memoize from 'micro-memoize';
 import { createMoizedComponent } from './component';
 import { DEFAULT_OPTIONS } from './constants';
 import { createMoizeInstance } from './instance';
-import { getMaxAgeOptions } from './maxAge';
+import { clearExpiration, getMaxAgeOptions } from './maxAge';
 import {
     createOnCacheOperation,
     getIsEqual,
     getIsMatchingKey,
     getTransformKey,
 } from './options';
+import type { KeyFieldPipelineState } from './options';
 import {
     clearStats,
     collectStats,
@@ -24,6 +25,8 @@ import type {
     Expiration,
     IsEqual,
     IsMatchingKey,
+    Key,
+    KeyField,
     MicroMemoizeOptions,
     Moize,
     Moizeable,
@@ -34,6 +37,7 @@ import type {
     TransformKey,
     UpdateCacheForKey,
 } from '../index.d';
+import { defaultArgumentSerializer } from './serialize';
 
 /**
  * @module moize
@@ -134,6 +138,12 @@ const moize: Moize = function <
                 : DEFAULT_OPTIONS.maxSize,
         profileName: options.profileName || getDefaultProfileName(fn),
     };
+    const didOverrideMaxSize =
+        typeof options.maxSize === 'number' && options.maxSize >= 0;
+
+    if (coalescedOptions.keyField && !didOverrideMaxSize) {
+        coalescedOptions.maxSize = Infinity;
+    }
     const expirations: Array<Expiration> = [];
 
     const {
@@ -143,6 +153,7 @@ const moize: Moize = function <
         isReact: isReactIgnored,
         isSerialized: isSerialzedIgnored,
         isShallowEqual: isShallowEqualIgnored,
+        keyField: keyFieldIgnored,
         matchesKey: matchesKeyIgnored,
         maxAge: maxAgeIgnored,
         maxArgs: maxArgsIgnored,
@@ -159,6 +170,17 @@ const moize: Moize = function <
         ...customOptions
     } = coalescedOptions;
 
+    const keyField = keyFieldIgnored;
+
+    const keyFieldState =
+        keyField !== undefined
+            ? createKeyFieldState(
+                  typeof maxSize === 'number' && isFinite(maxSize)
+                      ? maxSize
+                      : undefined
+              )
+            : undefined;
+
     const isEqual = getIsEqual(coalescedOptions);
     const isMatchingKey = getIsMatchingKey(coalescedOptions);
 
@@ -170,19 +192,43 @@ const moize: Moize = function <
     );
     const statsOptions = getStatsOptions(coalescedOptions);
 
-    const transformKey = getTransformKey(coalescedOptions);
+    const transformKey = getTransformKey(coalescedOptions, keyFieldState);
+
+    const keyFieldOnCacheHit =
+        keyFieldState && keyFieldState.enabled
+            ? function () {
+                  handleKeyFieldCacheHit(keyFieldState);
+              }
+            : undefined;
+
+    const keyFieldOnCacheAdd =
+        keyFieldState && keyFieldState.enabled
+            ? function (
+                  cache: Cache<MoizeableFn>,
+                  _options: Options<MoizeableFn>,
+                  moizedInstance: Moized<MoizeableFn>
+              ) {
+                  handleKeyFieldCacheAdd(
+                      keyFieldState,
+                      cache,
+                      moizedInstance,
+                      expirations
+                  );
+              }
+            : undefined;
 
     const microMemoizeOptions: MicroMemoizeOptions<MoizeableFn> = {
         ...customOptions,
         isEqual,
         isMatchingKey,
         isPromise,
-        maxSize,
+        maxSize: keyFieldState ? Infinity : maxSize,
         onCacheAdd: createOnCacheOperation(
             combine(
                 onCacheAdd,
                 maxAgeOptions.onCacheAdd,
-                statsOptions.onCacheAdd
+                statsOptions.onCacheAdd,
+                keyFieldOnCacheAdd
             )
         ),
         onCacheChange: createOnCacheOperation(onCacheChange),
@@ -190,7 +236,8 @@ const moize: Moize = function <
             combine(
                 onCacheHit,
                 maxAgeOptions.onCacheHit,
-                statsOptions.onCacheHit
+                statsOptions.onCacheHit,
+                keyFieldOnCacheHit
             )
         ),
         transformKey,
@@ -351,6 +398,24 @@ moize.matchesArg = function (argMatcher: IsEqual) {
  */
 moize.matchesKey = function (keyMatcher: IsMatchingKey) {
     return moize({ matchesKey: keyMatcher });
+};
+
+/**
+ * @function
+ * @name keyField
+ * @memberof module:moize
+ * @alias moize.keyField
+ *
+ * @description
+ * a moized method where cache keys are based on element identity using keyField
+ *
+ * @param keyField the field name or function to extract keys from array elements
+ * @returns the moizer function
+ */
+moize.keyField = function <KeyFieldValue extends string | ((item: any) => any)>(
+    keyField: KeyFieldValue
+) {
+    return moize({ keyField });
 };
 
 function maxAge<MaxAge extends number>(
@@ -603,6 +668,142 @@ moize.transformArgs = <Transformer extends TransformKey>(
 moize.updateCacheForKey = <UpdateWhen extends UpdateCacheForKey>(
     updateCacheForKey: UpdateWhen
 ) => moize({ updateCacheForKey });
+
+function createKeyFieldState(maxSize?: number): KeyFieldState {
+    return {
+        enabled: true,
+        maxSizeDefined: typeof maxSize === 'number' && isFinite(maxSize),
+        maxSize,
+        usageCounter: 0,
+        lastAccessMap: new Map<string, number>(),
+        pending: undefined,
+    };
+}
+
+function handleKeyFieldCacheHit(state: KeyFieldState) {
+    if (!state.pending) {
+        return;
+    }
+
+    state.usageCounter += 1;
+    state.lastAccessMap.set(state.pending.hash, state.usageCounter);
+    state.pending = undefined;
+}
+
+function handleKeyFieldCacheAdd<MoizeableFn extends Moizeable>(
+    state: KeyFieldState,
+    cache: Cache<MoizeableFn>,
+    moized: Moized<MoizeableFn>,
+    expirations: Array<Expiration>
+) {
+    if (!state.pending) {
+        return;
+    }
+
+    state.usageCounter += 1;
+    const pending = state.pending;
+
+    state.lastAccessMap.set(pending.hash, state.usageCounter);
+    state.pending = undefined;
+
+    if (!state.maxSizeDefined || !state.maxSize) {
+        return;
+    }
+
+    enforceKeyFieldMaxSize(state, cache, moized, expirations, pending);
+}
+
+function enforceKeyFieldMaxSize<MoizeableFn extends Moizeable>(
+    state: KeyFieldState,
+    cache: Cache<MoizeableFn>,
+    moized: Moized<MoizeableFn>,
+    expirations: Array<Expiration>,
+    pending: { hash: string; previousAccess?: number }
+) {
+    while (cache.keys.length > (state.maxSize as number)) {
+        let candidateIndex = -1;
+        let candidateAccess: number | undefined;
+
+        for (let index = 0; index < cache.keys.length; index++) {
+            const cacheKey = cache.keys[index];
+            const hash = getKeyFieldHash(cacheKey);
+
+            if (hash === pending.hash) {
+                continue;
+            }
+
+            const access = state.lastAccessMap.get(hash) ?? 0;
+
+            if (candidateIndex === -1) {
+                candidateIndex = index;
+                candidateAccess = access;
+                continue;
+            }
+
+            if (
+                shouldReplaceCandidate(
+                    pending.previousAccess,
+                    access,
+                    candidateAccess!
+                )
+            ) {
+                candidateIndex = index;
+                candidateAccess = access;
+            }
+        }
+
+        if (candidateIndex === -1) {
+            break;
+        }
+
+        removeCacheEntryAt(cache, candidateIndex, moized, expirations);
+    }
+}
+
+function shouldReplaceCandidate(
+    previousAccess: number | undefined,
+    access: number,
+    candidateAccess: number
+) {
+    if (previousAccess === undefined) {
+        return access < candidateAccess;
+    }
+
+    return access > candidateAccess;
+}
+
+function removeCacheEntryAt<MoizeableFn extends Moizeable>(
+    cache: Cache<MoizeableFn>,
+    index: number,
+    moized: Moized<MoizeableFn>,
+    expirations: Array<Expiration>
+) {
+    const {
+        _microMemoizeOptions: { onCacheChange },
+    } = moized;
+
+    const existingKey = cache.keys[index];
+
+    cache.keys.splice(index, 1);
+    cache.values.splice(index, 1);
+
+    if (onCacheChange) {
+        onCacheChange(cache, moized.options, moized);
+    }
+
+    clearExpiration(expirations, existingKey, true);
+}
+
+function getKeyFieldHash(key: Key): string {
+    return defaultArgumentSerializer(key)[0] as string;
+}
+
+type KeyFieldState = KeyFieldPipelineState & {
+    enabled: boolean;
+    maxSizeDefined: boolean;
+    maxSize?: number;
+    usageCounter: number;
+};
 
 // Add self-referring `default` property for edge-case cross-compatibility of mixed ESM/CommonJS usage.
 // This property is frozen and non-enumerable to avoid visibility on iteration or accidental overrides.
